@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.common import conv, fft2d, fftshift2d, Upsampler
+from models.fcb import FCBLayer
 
 
 class CALayer(nn.Module):
@@ -107,7 +108,7 @@ class APCALayer(nn.Module):
 
 
 class APCAB(nn.Module):
-    def __init__(self, conv, n_feat, kernel_size, reduction, bias=True, bn=False, act=nn.ReLU()):
+    def __init__(self, conv, n_feat, kernel_size, reduction, opt=None, bias=True, bn=False, act=nn.ReLU()):
         super(APCAB, self).__init__()
         modules_body = []
         for i in range(2):
@@ -116,7 +117,14 @@ class APCAB(nn.Module):
                 modules_body.append(nn.BatchNorm2d(n_feat))
             if i == 0:
                 modules_body.append(act)
-        modules_body.append(APCALayer(conv, n_feat, kernel_size, reduction))
+
+        use_fcb = False if opt is None else getattr(opt, 'use_fcb', False)
+        if use_fcb:
+            fcb_rows = getattr(opt, 'fcb_rows', 502)
+            fcb_cols = getattr(opt, 'fcb_cols', 502)
+            modules_body.append(FCBLayer(n_feat, fcb_rows, fcb_cols, act=act))
+        else:
+            modules_body.append(APCALayer(conv, n_feat, kernel_size, reduction, act=act))
         self.body = nn.Sequential(*modules_body)
 
     def forward(self, x):
@@ -126,11 +134,12 @@ class APCAB(nn.Module):
 
 
 class ResidualGroup(nn.Module):
-    def __init__(self, conv, n_feat, kernel_size, reduction, act, n_resblocks):
+    def __init__(self, conv, n_feat, kernel_size, reduction, act, n_resblocks, opt=None):
         super(ResidualGroup, self).__init__()
         modules_body = [
             APCAB(
-                conv, n_feat, kernel_size, reduction, bias=True, bn=False, act=act) for _ in range(n_resblocks)]
+                conv, n_feat, kernel_size, reduction, opt=opt, bias=True, bn=False, act=act
+            ) for _ in range(n_resblocks)]
         modules_body.append(conv(n_feat, n_feat, kernel_size))
         self.body = nn.Sequential(*modules_body)
 
@@ -143,16 +152,17 @@ class ResidualGroup(nn.Module):
 class APCAN(nn.Module):
     def __init__(self, opt):
         super(APCAN, self).__init__()
-        n_resgroups = 4
-        n_resblocks = 4
-        n_feats = 64
+        n_resgroups = getattr(opt, 'n_resgroups', 4)
+        n_resblocks = getattr(opt, 'n_resblocks', 4)
+        n_feats = getattr(opt, 'n_feats', 64)
         kernel_size = 3
-        reduction = 16
+        reduction = getattr(opt, 'reduction', 16)
         act = nn.ReLU()
         modules_head = [conv(9, n_feats, kernel_size)]
         modules_body = [
             ResidualGroup(
-                conv, n_feats, kernel_size, reduction, act=act, n_resblocks=n_resblocks) for _ in range(n_resgroups)]
+                conv, n_feats, kernel_size, reduction, act=act, n_resblocks=n_resblocks, opt=opt
+            ) for _ in range(n_resgroups)]
         modules_body.append(conv(n_feats, n_feats, kernel_size))
 
         modules_tail = [Upsampler(conv, opt.scale, n_feats, act=act),

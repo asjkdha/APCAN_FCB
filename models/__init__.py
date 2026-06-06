@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from torch.nn import init
 from models.APCAN_1 import APCAN as APCAN_1
@@ -37,7 +38,7 @@ def get_model(opt):
 
     net = APCAN_1(opt)
 
-    if not opt.cpu:
+    if torch.cuda.is_available() and not getattr(opt, 'cpu', False):
         net.cuda()
         net = nn.DataParallel(net)
 

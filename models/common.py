@@ -1,6 +1,5 @@
 import math
 import torch
-import torchvision
 import torch.nn as nn
 import torch.fft as fft
 import PIL.Image as Image

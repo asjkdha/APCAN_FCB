@@ -7,7 +7,7 @@ import skimage
 import numpy as np
 from skimage import io
 from models import get_model
-from utils.util import prctile_norm
+from utils.util import load_checkpoint_flexible
 
 opt = argparse.Namespace()
 
@@ -21,10 +21,13 @@ opt.model = 'apcan_1_actin'
 opt.weights = 'pretrain/{}.pth'.format(opt.model)
 
 # input/output layer options
-opt.imageSize = 128
+opt.imageSize = 502
 opt.scale = 2
 opt.nch_in = 9
 opt.nch_out = 1
+opt.fcb_rows = 502
+opt.fcb_cols = 502
+opt.use_fcb = True
 
 # architecture options
 opt.narch = 0
@@ -40,27 +43,34 @@ opt.batchSize = 1
 opt.device = torch.device('cuda' if torch.cuda.is_available() and not opt.cpu else 'cpu')
 
 
+def extract_sim_frames(stack):
+    if stack.ndim == 3 and stack.shape[0] >= 9:
+        return stack[:9]
+    if stack.ndim == 4 and stack.shape[0] > 1 and stack.shape[1] >= 9:
+        return stack[1, :9]
+    raise ValueError(f"Unsupported stack shape: {stack.shape}")
+
+
+def normalize_sim_frames(sim_frames):
+    sim_frames = np.asarray(sim_frames, dtype=np.float32)
+    vmin = np.percentile(sim_frames, 0.1)
+    vmax = np.percentile(sim_frames, 99.9)
+    denom = max(vmax - vmin, 1e-8)
+    return np.clip((sim_frames - vmin) / denom, 0, 1).astype(np.float32)
+
+
 def LoadModel(opt):
     print('Loading model')
     print(opt)
     net = get_model(opt)
     print('loading checkpoint', opt.weights)
-    checkpoint = torch.load(opt.weights)
-    if type(checkpoint) is dict:
-        state_dict = checkpoint['state_dict']
-    else:
-        state_dict = checkpoint
-    net.load_state_dict(state_dict)
+    load_checkpoint_flexible(net, opt.weights, opt.device)
     return net
 
 
 def SIM_reconstruct9(model, opt):
     def prepimg(stack):
-        input_9_frames = stack[:9]
-        input_9_frames = input_9_frames.astype('float')
-        input_9_frames = np.array(input_9_frames)
-        for i in range(len(input_9_frames)):
-            input_9_frames[i] = prctile_norm(input_9_frames[i])
+        input_9_frames = normalize_sim_frames(stack[:9])
         input_9_frames = torch.from_numpy(input_9_frames).float()
         return input_9_frames
 
@@ -74,21 +84,14 @@ def SIM_reconstruct9(model, opt):
         
         stack = io.imread(imgfile)
 
-        if stack.ndim == 3:
-            # shape: 9, H, W
-            sim_frames = stack[:9]
-        elif stack.ndim == 4:
-            # shape: T, 9, H, W
-            sim_frames = stack[1, :9]
-        else:
-            raise ValueError(f"Unsupported stack shape: {stack.shape}")
+        sim_frames = extract_sim_frames(stack)
 
         sim_input = prepimg(sim_frames)
         sim_input = sim_input.unsqueeze(0)
         with torch.no_grad():
             sr = model(sim_input.to(opt.device))
             sr = torch.clamp(sr.cpu(), min=0, max=1)
-        sr = np.uint16(prctile_norm(sr.squeeze().numpy()) * 65535)
+        sr = np.uint16(sr.squeeze().numpy() * 65535)
         skimage.io.imsave('%s/%s_%s.tif' % (opt.out, basename[:-4], opt.model), sr)
 
 

@@ -10,7 +10,7 @@ import torch.optim as optim
 import torchvision.transforms as transforms
 from models import get_model
 from pytorch_ssim import SSIM
-from utils.util import img_comp
+from utils.util import img_comp, load_checkpoint_flexible
 from data import get_data_loader
 from option.options import parser
 from utils.plotting import testAndMakeCombinedPlots, generate_convergence_plots
@@ -80,14 +80,16 @@ def remove_dataparallel_wrapper(state_dict):
 
 def train(opt, trainloader, validloader, net):
     start_epoch = 0
-    validate_nrmse = [np.Inf]
+    validate_nrmse = [np.inf]
     loss_function = nn.L1Loss()
     ssim_function = SSIM()
     optimizer = optim.Adam(net.parameters(), lr=opt.lr)
+    checkpoint = None
+    scheduler = None
     if len(opt.weights) > 0:
-        checkpoint = torch.load(opt.weights)
         print('loading checkpoint', opt.weights)
-        net.load_state_dict(checkpoint['state_dict'])
+        checkpoint = torch.load(opt.weights, map_location=opt.device)
+        load_checkpoint_flexible(net, opt.weights, opt.device)
         if opt.lr == 1:
             optimizer.load_state_dict(checkpoint['optimizer'])
         start_epoch = checkpoint['epoch']
@@ -165,31 +167,34 @@ def validate(opt, validloader, net, epoch, optimizer, scheduler, validate_nrmse)
     toPIL = transforms.ToPILImage()
     net.eval()
     for i, batch in enumerate(validloader):
-        lr, hr, wf = batch['sim_inputs'], batch['sim_gt'], batch['wf']
+        lr_batch, hr_batch, wf_batch = batch['sim_inputs'], batch['sim_gt'], batch['wf']
         with torch.no_grad():
-            sr = net(lr.to(opt.device))
-        for j in range(len(lr)):
+            sr_batch = net(lr_batch.to(opt.device))
+        for j in range(len(lr_batch)):
             save_flag = (epoch < 5 or (
                     epoch + 1) % opt.plotinterval == 0 or epoch == opt.nepoch - 1) and count < opt.nplot
-            sr, hr, lr = sr.data[j], hr.data[j], wf.data[j]
-            sr = torch.clamp(sr, min=0, max=1)
-            lr, sr, hr = toPIL(lr), toPIL(sr), toPIL(hr)
+            sr_j = torch.clamp(sr_batch.data[j], min=0, max=1).cpu()
+            hr_j = hr_batch.data[j].cpu()
+            wf_j = wf_batch.data[j].cpu()
             if save_flag:
-                lr.save('%s/lr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
-                sr.save('%s/sr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
-                hr.save('%s/hr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
+                toPIL(wf_j).save('%s/lr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
+                toPIL(sr_j).save('%s/sr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
+                toPIL(hr_j).save('%s/hr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
+            mses, nrmses, psnrs, ssims = img_comp(
+                hr_j.numpy(), sr_j.numpy(), mses, nrmses, psnrs, ssims
+            )
             count += 1
             if count == opt.ntest:
                 break
-        mses, nrmses, psnrs, ssims = img_comp(hr, sr, mses, nrmses, psnrs, ssims)
         if count == opt.ntest:
             break
+    net.train()
 
     if min(validate_nrmse) > np.mean(nrmses):
         checkpoint = {'epoch': epoch + 1,
                       'state_dict': net.state_dict(),
                       'optimizer': optimizer.state_dict()}
-        if len(opt.scheduler) > 0:
+        if len(opt.scheduler) > 0 and scheduler is not None:
             checkpoint['scheduler'] = scheduler.state_dict()
         torch.save(checkpoint, opt.out + '/best.pth')
         validate_nrmse.append(np.mean(nrmses))
@@ -224,9 +229,8 @@ def main(opt):
         train(opt, trainloader, validloader, net)
     else:
         if len(opt.weights) > 0:
-            checkpoint = torch.load(opt.weights)
             print('loading checkpoint', opt.weights)
-            net.load_state_dict(checkpoint['state_dict'])
+            load_checkpoint_flexible(net, opt.weights, opt.device)
             print('time: %0.1f' % (time.perf_counter() - t0))
         testAndMakeCombinedPlots(net, validloader, opt)
     opt.fid.close()

@@ -79,6 +79,38 @@ def prctile_norm(x, min_prc=0, max_prc=100):
     return y
 
 
+def load_checkpoint_flexible(model, ckpt_path, device):
+    ckpt = torch.load(ckpt_path, map_location=device)
+
+    if isinstance(ckpt, dict) and 'state_dict' in ckpt:
+        state_dict = ckpt['state_dict']
+    elif isinstance(ckpt, dict) and 'model' in ckpt:
+        state_dict = ckpt['model']
+    elif isinstance(ckpt, dict) and 'model_state' in ckpt:
+        state_dict = ckpt['model_state']
+    else:
+        state_dict = ckpt
+
+    model_state = model.state_dict()
+    model_keys = list(model_state.keys())
+    if not model_keys:
+        raise ValueError('Cannot load checkpoint into a model with no parameters')
+
+    target_has_module = model_keys[0].startswith('module.')
+    new_state = {}
+    for key, value in state_dict.items():
+        if key.startswith('module.') and not target_has_module:
+            new_key = key[len('module.'):]
+        elif not key.startswith('module.') and target_has_module:
+            new_key = 'module.' + key
+        else:
+            new_key = key
+        new_state[new_key] = value
+
+    model.load_state_dict(new_state, strict=True)
+    return model
+
+
 def max_min_norm(x):
     return (x - np.min(x)) / (np.max(x) - np.min(x))
 

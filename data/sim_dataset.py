@@ -5,7 +5,35 @@ import torch
 import numpy as np
 from PIL import Image
 from skimage import io
-from utils.util import prctile_norm
+
+
+def _normalize_with_range(array, vmin, denom):
+    normalized = np.clip((array.astype(np.float32) - vmin) / denom, 0, 1)
+    return normalized.astype(np.float32)
+
+
+def ensure_channel_first_gt(gt):
+    gt = np.asarray(gt, dtype=np.float32)
+    if gt.ndim == 2:
+        gt = np.expand_dims(gt, axis=0)
+    return gt.astype(np.float32)
+
+
+def shared_percentile_normalize(input_9_frames, wide_field, gt):
+    input_9_frames = np.asarray(input_9_frames, dtype=np.float32)
+    wide_field = np.asarray(wide_field, dtype=np.float32)
+    gt = np.asarray(gt, dtype=np.float32)
+
+    # Use the raw SIM frames as the shared range so raw and GT are not
+    # normalized independently, which would hide the real intensity mapping.
+    vmin = np.percentile(input_9_frames, 0.1)
+    vmax = np.percentile(input_9_frames, 99.9)
+    denom = max(vmax - vmin, 1e-8)
+
+    input_9_frames = _normalize_with_range(input_9_frames, vmin, denom)
+    wide_field = _normalize_with_range(wide_field, vmin, denom)
+    gt = ensure_channel_first_gt(_normalize_with_range(gt, vmin, denom))
+    return input_9_frames, wide_field, gt
 
 
 class SIMDataset:
@@ -48,27 +76,35 @@ class SIMDataset:
         elif self.category == 'valid':
             gt = io.imread(self.images_path[index].replace('validate', 'validate_gt') + '.tif').astype('float32')
         input_9_frames = stack[:self.nch_in]
+        if input_9_frames.shape[0] != self.nch_in:
+            raise ValueError(
+                'Expected {} SIM input frames, but got {} in {}'.format(
+                    self.nch_in, input_9_frames.shape[0], self.images_path[index]
+                )
+            )
         if self.model == 'srcnn':
             inputs = []
             w, h = input_9_frames[0].shape
             for i in range(len(input_9_frames)):
                 inputs.append(
                     np.array(Image.fromarray(input_9_frames[i]).resize((h * 2, w * 2), resample=Image.BICUBIC)))
-            wide_field = np.mean(inputs)
+            wide_field = np.mean(inputs, axis=0)
         else:
             wide_field = np.mean(input_9_frames, 0)
 
         # normalise
         if self.data_norm == 'minmax':
-            gt = prctile_norm(gt)
-            wide_field = prctile_norm(wide_field)
-            for i in range(len(input_9_frames)):
-                input_9_frames[i] = prctile_norm(input_9_frames[i])
+            input_9_frames, wide_field, gt = shared_percentile_normalize(input_9_frames, wide_field, gt)
+        else:
+            input_9_frames = input_9_frames.astype(np.float32)
+            wide_field = wide_field.astype(np.float32)
+            if self.nch_out == 1:
+                gt = ensure_channel_first_gt(gt)
+            else:
+                gt = gt.astype(np.float32)
         input_9_frames = torch.from_numpy(input_9_frames).float()
         wide_field = torch.from_numpy(wide_field).unsqueeze(0).float()
         gt = torch.from_numpy(gt).float()
-        if self.nch_out == 1:
-            gt = gt.unsqueeze(0)
         return {'sim_inputs': input_9_frames, 'sim_gt': gt, 'wf': wide_field}
 
     def __len__(self):

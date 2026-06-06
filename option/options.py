@@ -2,7 +2,7 @@ import argparse
 
 # training options
 parser = argparse.ArgumentParser()
-parser.add_argument('--model', type=str, default='apcan_1', help='model to use')
+parser.add_argument('--model', type=str, default='apcan_1_actin', help='model to use')
 parser.add_argument('--lr', type=float, default=1e-4, help='learning rate')
 parser.add_argument('--data_norm', type=str, default='minmax', help='if normalization should not be used')
 parser.add_argument('--nepoch', type=int, default=100, help='number of epochs to train for')
@@ -17,7 +17,7 @@ parser.add_argument('--alpha', type=float, default=0.1)
 
 # data_preprocess
 parser.add_argument('--dataset', type=str, default='T-SIM', help='dataset to train')
-parser.add_argument('--imageSize', type=int, default=128, help='the low resolution image size')
+parser.add_argument('--imageSize', type=int, default=502, help='the low resolution image size')
 parser.add_argument('--weights', type=str, default='', help='model to retrain from')
 parser.add_argument('--basedir', type=str, default='',
                     help='path to prepend to all others paths: root, output, weights')
@@ -34,6 +34,9 @@ parser.add_argument('--batchSize', type=int, default=6, help='input batch size')
 parser.add_argument('--scale', type=int, default=2, help='low to high resolution scaling factor')
 parser.add_argument('--nch_in', type=int, default=9, help='channels in input')
 parser.add_argument('--nch_out', type=int, default=1, help='channels in output')
+parser.add_argument('--use_fcb', action='store_true', help='replace APCALayer with FCBLayer')
+parser.add_argument('--fcb_rows', type=int, default=502, help='FCB fixed input height')
+parser.add_argument('--fcb_cols', type=int, default=502, help='FCB fixed input width')
 
 # architecture options 
 parser.add_argument('--narch', type=int, default=0, help='architecture-dependent parameter')

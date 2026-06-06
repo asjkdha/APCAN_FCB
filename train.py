@@ -112,9 +112,11 @@ def train(opt, trainloader, validloader, net):
             loss = a * content_loss + (1 - a) * (1 - ssim)
             optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
+
             clip_value = opt.gradient_clipping / get_lr(optimizer)
             nn.utils.clip_grad_value_(net.parameters(), clip_value)
+
+            optimizer.step()
             ######### Status and display #########
             total_loss += loss.data.item()
             print(

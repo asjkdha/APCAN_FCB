@@ -12,14 +12,7 @@ def fft2d(input):
 
 
 def fftshift2d(input):
-    b, c, h, w = input.shape
-    fs11 = input[:, :, -h // 2:h, -w // 2:w]
-    fs12 = input[:, :, -h // 2:h, 0:w // 2]
-    fs21 = input[:, :, 0:h // 2, -w // 2:w]
-    fs22 = input[:, :, 0:h // 2, 0:w // 2]
-    output = torch.cat([torch.cat([fs11, fs21], axis=2), torch.cat([fs12, fs22], axis=2)], axis=3)
-    output = torchvision.transforms.Resize((128, 128), interpolation=Image.BICUBIC)(output)
-    return output
+    return torch.fft.fftshift(input, dim=(2, 3))
 
 
 def conv(in_channels, out_channels, kernel_size, bias=True):

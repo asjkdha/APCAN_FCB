@@ -32,7 +32,7 @@ parser.add_argument('--batchSize', type=int, default=6, help='input batch size')
 
 # restoration options
 parser.add_argument('--scale', type=int, default=2, help='low to high resolution scaling factor')
-parser.add_argument('--nch_in', type=int, default=27, help='channels in input')
+parser.add_argument('--nch_in', type=int, default=9, help='channels in input')
 parser.add_argument('--nch_out', type=int, default=1, help='channels in output')
 
 # architecture options 

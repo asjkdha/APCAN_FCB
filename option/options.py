@@ -1,7 +1,11 @@
 import argparse
+import sys
 
 # training options
 parser = argparse.ArgumentParser()
+parser.add_argument('--preset', type=str, default='fcb_debug',
+                    choices=['fcb_debug', 'fcb_small', 'fcb_medium', 'apcan_base'],
+                    help='preset training configuration')
 parser.add_argument('--model', type=str, default='apcan_1_actin', help='model to use')
 parser.add_argument('--lr', type=float, default=1e-4, help='learning rate')
 parser.add_argument('--data_norm', type=str, default='minmax', help='if normalization should not be used')
@@ -25,6 +29,17 @@ parser.add_argument('--root', type=str, default='./dataset', help='dataset to tr
 parser.add_argument('--out', type=str, default='checkpoint', help='folder to output model training test_results')
 parser.add_argument('--disposableTrainingData', action='store_true',
                     help='whether to delete training data_preprocess after training')
+parser.add_argument('--gt_mapping_mode', type=str, default='grouped',
+                    choices=['one_to_one', 'grouped'],
+                    help='GT mapping mode')
+parser.add_argument('--gt_group_size', type=int, default=12,
+                    help='number of raw sample folders sharing one GT when gt_mapping_mode=grouped')
+parser.add_argument('--filename_digits', type=int, default=8,
+                    help='zero padding digits for folder and gt filenames')
+parser.add_argument('--raw_index_start', type=int, default=1,
+                    help='starting index of raw sample folders')
+parser.add_argument('--gt_index_start', type=int, default=1,
+                    help='starting index of gt files')
 
 # computation 
 parser.add_argument('--workers', type=int, default=4, help='number of data_preprocess loading workers')
@@ -53,3 +68,172 @@ parser.add_argument('--cpu', action='store_true')
 parser.add_argument('--batchSize_test', type=int, default=1, help='input batch size for test loader')
 parser.add_argument('--plotinterval', type=int, default=1, help='number of epochs between plotting')
 parser.add_argument('--nplot', type=int, default=4, help='number of plots in a test')
+
+
+RESTORABLE_OPTION_KEYS = [
+    'preset',
+    'model',
+    'root',
+    'out',
+    'use_fcb',
+    'fcb_rows',
+    'fcb_cols',
+    'imageSize',
+    'scale',
+    'nch_in',
+    'nch_out',
+    'n_resgroups',
+    'n_resblocks',
+    'n_feats',
+    'reduction',
+    'batchSize',
+    'batchSize_test',
+    'gt_mapping_mode',
+    'gt_group_size',
+    'filename_digits',
+    'raw_index_start',
+    'gt_index_start',
+    'lr',
+    'nepoch',
+    'testinterval',
+    'saveinterval',
+    'gradient_clipping',
+]
+
+
+def get_cli_keys():
+    keys = set()
+    for arg in sys.argv[1:]:
+        if arg.startswith('--'):
+            keys.add(arg[2:].replace('-', '_'))
+    return keys
+
+
+def set_if_not_cli(opt, key, value, cli_keys):
+    if key not in cli_keys:
+        setattr(opt, key, value)
+
+
+def apply_preset(opt, cli_keys):
+    presets = {
+        'fcb_debug': {
+            'use_fcb': True,
+            'model': 'apcan_1_actin',
+            'root': './dataset/F-actin',
+            'out': 'checkpoint',
+            'imageSize': 502,
+            'fcb_rows': 502,
+            'fcb_cols': 502,
+            'scale': 2,
+            'nch_in': 9,
+            'nch_out': 1,
+            'batchSize': 1,
+            'batchSize_test': 1,
+            'n_resgroups': 1,
+            'n_resblocks': 1,
+            'n_feats': 32,
+            'reduction': 16,
+            'lr': 1e-4,
+            'nepoch': 20,
+            'testinterval': 1,
+            'saveinterval': 10,
+            'gradient_clipping': 0.1,
+            'gt_mapping_mode': 'grouped',
+            'gt_group_size': 12,
+            'filename_digits': 8,
+            'raw_index_start': 1,
+            'gt_index_start': 1,
+        },
+        'fcb_small': {
+            'use_fcb': True,
+            'model': 'apcan_1_actin',
+            'root': './dataset/F-actin',
+            'out': 'checkpoint',
+            'imageSize': 502,
+            'fcb_rows': 502,
+            'fcb_cols': 502,
+            'scale': 2,
+            'nch_in': 9,
+            'nch_out': 1,
+            'batchSize': 1,
+            'batchSize_test': 1,
+            'n_resgroups': 2,
+            'n_resblocks': 2,
+            'n_feats': 32,
+            'reduction': 16,
+            'lr': 1e-4,
+            'nepoch': 100,
+            'testinterval': 1,
+            'saveinterval': 20,
+            'gradient_clipping': 0.1,
+            'gt_mapping_mode': 'grouped',
+            'gt_group_size': 12,
+            'filename_digits': 8,
+            'raw_index_start': 1,
+            'gt_index_start': 1,
+        },
+        'fcb_medium': {
+            'use_fcb': True,
+            'model': 'apcan_1_actin',
+            'root': './dataset/F-actin',
+            'out': 'checkpoint',
+            'imageSize': 502,
+            'fcb_rows': 502,
+            'fcb_cols': 502,
+            'scale': 2,
+            'nch_in': 9,
+            'nch_out': 1,
+            'batchSize': 1,
+            'batchSize_test': 1,
+            'n_resgroups': 2,
+            'n_resblocks': 2,
+            'n_feats': 64,
+            'reduction': 16,
+            'lr': 1e-4,
+            'nepoch': 200,
+            'testinterval': 1,
+            'saveinterval': 20,
+            'gradient_clipping': 0.1,
+            'gt_mapping_mode': 'grouped',
+            'gt_group_size': 12,
+            'filename_digits': 8,
+            'raw_index_start': 1,
+            'gt_index_start': 1,
+        },
+        'apcan_base': {
+            'use_fcb': False,
+            'model': 'apcan_1_actin',
+            'root': './dataset/F-actin',
+            'out': 'checkpoint',
+            'imageSize': 502,
+            'fcb_rows': 502,
+            'fcb_cols': 502,
+            'scale': 2,
+            'nch_in': 9,
+            'nch_out': 1,
+            'batchSize': 1,
+            'batchSize_test': 1,
+            'n_resgroups': 4,
+            'n_resblocks': 4,
+            'n_feats': 64,
+            'reduction': 16,
+            'lr': 1e-4,
+            'nepoch': 100,
+            'testinterval': 1,
+            'saveinterval': 20,
+            'gradient_clipping': 0.1,
+            'gt_mapping_mode': 'grouped',
+            'gt_group_size': 12,
+            'filename_digits': 8,
+            'raw_index_start': 1,
+            'gt_index_start': 1,
+        },
+    }
+
+    if opt.preset not in presets:
+        raise ValueError(f'Unsupported preset: {opt.preset}')
+
+    for key, value in presets[opt.preset].items():
+        set_if_not_cli(opt, key, value, cli_keys)
+
+    return opt

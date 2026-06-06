@@ -46,10 +46,14 @@ class SIMDataset:
     def __init__(self, opt, category):
         super(SIMDataset, self).__init__()
         self.images_path = []
+        self.root = opt.root
+        self.mode = category
         if category == 'train':
             inputs = os.path.join(opt.root, 'training')
         elif category == 'valid':
             inputs = os.path.join(opt.root, 'validate')
+        else:
+            raise ValueError('Unsupported dataset mode: {}'.format(category))
         images_input_path = glob.glob(inputs + '/*')
         self.images_path.extend(images_input_path)
         self.scale = opt.scale
@@ -60,9 +64,42 @@ class SIMDataset:
         self.out = opt.out
         self.model = opt.model
         self.category = category
+        self.gt_mapping_mode = getattr(opt, 'gt_mapping_mode', 'grouped')
+        self.gt_group_size = getattr(opt, 'gt_group_size', 12)
+        self.filename_digits = getattr(opt, 'filename_digits', 8)
+        self.raw_index_start = getattr(opt, 'raw_index_start', 1)
+        self.gt_index_start = getattr(opt, 'gt_index_start', 1)
         if category == 'valid':
             self.images_path = np.random.choice(self.images_path, size=opt.ntest)
         self.len = len(self.images_path)
+
+    def get_gt_path(self, raw_folder_path):
+        raw_name = os.path.basename(os.path.normpath(raw_folder_path))
+        raw_idx = int(raw_name)
+
+        if self.gt_mapping_mode == 'one_to_one':
+            gt_idx = raw_idx
+        elif self.gt_mapping_mode == 'grouped':
+            gt_idx = ((raw_idx - self.raw_index_start) // self.gt_group_size) + self.gt_index_start
+        else:
+            raise ValueError('Unsupported gt_mapping_mode: {}'.format(self.gt_mapping_mode))
+
+        gt_name = '{:0{}d}.tif'.format(gt_idx, self.filename_digits)
+        if self.mode == 'train':
+            gt_dir = os.path.join(self.root, 'training_gt')
+        elif self.mode in ['val', 'valid', 'validate']:
+            gt_dir = os.path.join(self.root, 'validate_gt')
+        else:
+            raise ValueError('Unsupported dataset mode: {}'.format(self.mode))
+
+        gt_path = os.path.join(gt_dir, gt_name)
+        if not os.path.exists(gt_path):
+            raise FileNotFoundError(
+                'GT file not found: {}. raw_folder={}, gt_mapping_mode={}, gt_group_size={}'.format(
+                    gt_path, raw_folder_path, self.gt_mapping_mode, self.gt_group_size
+                )
+            )
+        return gt_path
 
     def __getitem__(self, index):
         img_path = glob.glob(self.images_path[index] + '/*.tif')
@@ -71,10 +108,8 @@ class SIMDataset:
         for image_path in img_path:
             stack.append(io.imread(image_path))
         stack = np.array(stack).astype('float32')
-        if self.category == 'train':
-            gt = io.imread(self.images_path[index].replace('training', 'training_gt') + '.tif').astype('float32')
-        elif self.category == 'valid':
-            gt = io.imread(self.images_path[index].replace('validate', 'validate_gt') + '.tif').astype('float32')
+        gt_path = self.get_gt_path(self.images_path[index])
+        gt = io.imread(gt_path).astype('float32')
         input_9_frames = stack[:self.nch_in]
         if input_9_frames.shape[0] != self.nch_in:
             raise ValueError(

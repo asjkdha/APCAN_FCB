@@ -1,8 +1,10 @@
 import importlib
 import os
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -93,6 +95,139 @@ class DataPreprocessTests(unittest.TestCase):
             np.allclose(norm_wf, np.clip((wide_field - vmin) / denom, 0, 1))
         )
         self.assertTrue(np.all(norm_gt == 1))
+
+
+class GTMappingTests(unittest.TestCase):
+    def _make_opt(self, root, **overrides):
+        values = dict(
+            root=root,
+            scale=2,
+            task="simin_simout",
+            nch_in=9,
+            nch_out=1,
+            data_norm="minmax",
+            out="checkpoint",
+            model="apcan_1_actin",
+            ntest=1,
+            gt_mapping_mode="grouped",
+            gt_group_size=12,
+            filename_digits=8,
+            raw_index_start=1,
+            gt_index_start=1,
+        )
+        values.update(overrides)
+        return Namespace(**values)
+
+    def _touch_gt(self, root, split, name):
+        gt_dir = os.path.join(root, split)
+        os.makedirs(gt_dir, exist_ok=True)
+        path = os.path.join(gt_dir, name)
+        with open(path, "wb"):
+            pass
+        return path
+
+    def test_grouped_gt_mapping_uses_shared_gt_for_raw_groups(self):
+        from data.sim_dataset import SIMDataset
+
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "training", "00000001"))
+            os.makedirs(os.path.join(root, "training", "00000012"))
+            os.makedirs(os.path.join(root, "training", "00000013"))
+            gt1 = self._touch_gt(root, "training_gt", "00000001.tif")
+            gt2 = self._touch_gt(root, "training_gt", "00000002.tif")
+
+            dataset = SIMDataset(self._make_opt(root), "train")
+
+            self.assertEqual(dataset.get_gt_path(os.path.join(root, "training", "00000001")), gt1)
+            self.assertEqual(dataset.get_gt_path(os.path.join(root, "training", "00000012")), gt1)
+            self.assertEqual(dataset.get_gt_path(os.path.join(root, "training", "00000013")), gt2)
+
+    def test_one_to_one_gt_mapping_keeps_raw_index(self):
+        from data.sim_dataset import SIMDataset
+
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "training", "00000013"))
+            gt13 = self._touch_gt(root, "training_gt", "00000013.tif")
+
+            dataset = SIMDataset(self._make_opt(root, gt_mapping_mode="one_to_one"), "train")
+
+            self.assertEqual(dataset.get_gt_path(os.path.join(root, "training", "00000013")), gt13)
+
+    def test_validate_uses_validate_gt_and_missing_gt_has_context(self):
+        from data.sim_dataset import SIMDataset
+
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "validate", "00000013"))
+            gt2 = self._touch_gt(root, "validate_gt", "00000002.tif")
+            dataset = SIMDataset(self._make_opt(root), "valid")
+
+            self.assertEqual(dataset.get_gt_path(os.path.join(root, "validate", "00000013")), gt2)
+
+            with self.assertRaisesRegex(
+                FileNotFoundError, r"GT file not found: .*gt_mapping_mode=grouped.*gt_group_size=12"
+            ):
+                dataset.get_gt_path(os.path.join(root, "validate", "00000025"))
+
+
+class PresetTests(unittest.TestCase):
+    def test_apply_preset_sets_defaults_but_preserves_cli_overrides(self):
+        from option.options import apply_preset, parser
+
+        opt = parser.parse_args(["--preset", "fcb_small", "--n_feats", "64"])
+        apply_preset(opt, {"preset", "n_feats"})
+
+        self.assertTrue(opt.use_fcb)
+        self.assertEqual(opt.root, "./dataset/F-actin")
+        self.assertEqual(opt.n_resgroups, 2)
+        self.assertEqual(opt.n_resblocks, 2)
+        self.assertEqual(opt.n_feats, 64)
+        self.assertEqual(opt.gt_mapping_mode, "grouped")
+
+    def test_apcan_base_preset_disables_fcb(self):
+        from option.options import apply_preset, parser
+
+        opt = parser.parse_args(["--preset", "apcan_base"])
+        apply_preset(opt, {"preset"})
+
+        self.assertFalse(opt.use_fcb)
+        self.assertEqual(opt.n_resgroups, 4)
+        self.assertEqual(opt.n_resblocks, 4)
+        self.assertEqual(opt.n_feats, 64)
+
+    def test_train_options_applies_preset_and_cli_override(self):
+        with patch.object(sys, "argv", ["train.py", "--preset", "fcb_debug", "--n_feats", "64"]):
+            train_script = importlib.import_module("train")
+            opt = train_script.options()
+
+        self.assertTrue(opt.use_fcb)
+        self.assertEqual(opt.batchSize, 1)
+        self.assertEqual(opt.nepoch, 20)
+        self.assertEqual(opt.n_resgroups, 1)
+        self.assertEqual(opt.n_feats, 64)
+
+    def test_train_options_restores_log_values_without_overriding_cli_keys(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            logfile = os.path.join(tmpdir, "apcan_1_actin.txt")
+            with open(logfile, "w", encoding="utf-8") as fid:
+                fid.write(
+                    "Namespace(model='apcan_1_actin', task='simin_simout', "
+                    "nch_in=9, nch_out=1, n_resgroups=3, n_resblocks=3, "
+                    "n_feats=48, reduction=8, use_fcb=True, fcb_rows=502, "
+                    "fcb_cols=502, imageSize=502, scale=2, batchSize=2, "
+                    "batchSize_test=1, gt_mapping_mode='one_to_one', "
+                    "gt_group_size=6, filename_digits=8, raw_index_start=1, "
+                    "gt_index_start=1, lr=0.0002, nepoch=5)"
+                )
+
+            with patch.object(sys, "argv", ["train.py", "--weights", tmpdir, "--n_feats", "64"]):
+                train_script = importlib.import_module("train")
+                opt = train_script.options()
+
+        self.assertEqual(opt.n_resgroups, 3)
+        self.assertEqual(opt.reduction, 8)
+        self.assertEqual(opt.gt_mapping_mode, "one_to_one")
+        self.assertTrue(opt.use_fcb)
+        self.assertEqual(opt.n_feats, 64)
 
 
 class TestScriptTests(unittest.TestCase):

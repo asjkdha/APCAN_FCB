@@ -7,12 +7,12 @@ import shutil
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-import torchvision.transforms as transforms
+from PIL import Image
 from models import get_model
 from pytorch_ssim import SSIM
 from utils.util import img_comp, load_checkpoint_flexible
 from data import get_data_loader
-from option.options import parser
+from option.options import apply_preset, get_cli_keys, parser, RESTORABLE_OPTION_KEYS
 from utils.plotting import testAndMakeCombinedPlots, generate_convergence_plots
 
 
@@ -27,8 +27,69 @@ def print_networks(net, verbose):
     print('-----------------------------------------------')
 
 
+def tensor_to_pil_image(tensor):
+    array = tensor.detach().cpu().float().numpy()
+    array = np.squeeze(array)
+    if array.ndim == 3:
+        array = np.transpose(array, (1, 2, 0))
+    array = np.clip(array, 0, 1)
+    return Image.fromarray((array * 65535).astype(np.uint16))
+
+
+def _extract_logged_value(optstr, key):
+    pattern = key + '='
+    start = optstr.find(pattern)
+    if start < 0:
+        return None
+    start += len(pattern)
+    end = start
+    quote = None
+    while end < len(optstr):
+        char = optstr[end]
+        if quote is not None:
+            if char == quote:
+                quote = None
+        elif char in ["'", '"']:
+            quote = char
+        elif char in [',', ')', '\n']:
+            break
+        end += 1
+    return optstr[start:end].strip()
+
+
+def _convert_logged_value(raw_value, current_value):
+    if raw_value is None:
+        return current_value
+    raw_value = raw_value.strip()
+    if raw_value in ['None', 'none']:
+        return None
+    if isinstance(current_value, bool):
+        return raw_value.lower() in ['true', '1', 'yes']
+    if isinstance(current_value, int) and not isinstance(current_value, bool):
+        return int(raw_value)
+    if isinstance(current_value, float):
+        return float(raw_value)
+    if raw_value.startswith(("'", '"')) and raw_value.endswith(("'", '"')):
+        return raw_value[1:-1]
+    return raw_value
+
+
+def restore_options_from_log(opt, logfile, cli_keys):
+    with open(logfile, 'r') as fid:
+        optstr = fid.read()
+    for key in RESTORABLE_OPTION_KEYS:
+        if key in cli_keys or not hasattr(opt, key):
+            continue
+        raw_value = _extract_logged_value(optstr, key)
+        if raw_value is not None:
+            setattr(opt, key, _convert_logged_value(raw_value, getattr(opt, key)))
+    return opt
+
+
 def options():
+    cli_keys = get_cli_keys()
     opt = parser.parse_args()
+    opt = apply_preset(opt, cli_keys)
     if opt.data_norm == '':
         opt.data_norm = opt.dataset
     elif opt.data_norm.lower() == 'none':
@@ -45,22 +106,7 @@ def options():
         if not os.path.isfile(opt.weights):
             opt.weights = opt.weights.replace('best.pth', 'prelim.pth')
         if os.path.isfile(logfile):
-            fid = open(logfile, 'r')
-            optstr = fid.read()
-            optlist = optstr.split(', ')
-
-            def getopt(optname, typestr):
-                opt_e = [e.split('=')[-1].strip("\'")
-                         for e in optlist if (optname.split('.')[-1] + '=') in e]
-                return eval(optname) if len(opt_e) == 0 else typestr(opt_e[0])
-
-            opt.model = getopt('opt.model', str)
-            opt.task = getopt('opt.task', str)
-            opt.nch_in = getopt('opt.nch_in', int)
-            opt.nch_out = getopt('opt.nch_out', int)
-            opt.n_resgroups = getopt('opt.n_resgroups', int)
-            opt.n_resblocks = getopt('opt.n_resblocks', int)
-            opt.n_feats = getopt('opt.n_feats', int)
+            restore_options_from_log(opt, logfile, cli_keys)
     return opt
 
 
@@ -166,7 +212,6 @@ def train(opt, trainloader, validloader, net):
 def validate(opt, validloader, net, epoch, optimizer, scheduler, validate_nrmse):
     mses, nrmses, psnrs, ssims = [], [], [], []
     count = 0
-    toPIL = transforms.ToPILImage()
     net.eval()
     for i, batch in enumerate(validloader):
         lr_batch, hr_batch, wf_batch = batch['sim_inputs'], batch['sim_gt'], batch['wf']
@@ -179,9 +224,9 @@ def validate(opt, validloader, net, epoch, optimizer, scheduler, validate_nrmse)
             hr_j = hr_batch.data[j].cpu()
             wf_j = wf_batch.data[j].cpu()
             if save_flag:
-                toPIL(wf_j).save('%s/lr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
-                toPIL(sr_j).save('%s/sr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
-                toPIL(hr_j).save('%s/hr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
+                tensor_to_pil_image(wf_j).save('%s/lr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
+                tensor_to_pil_image(sr_j).save('%s/sr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
+                tensor_to_pil_image(hr_j).save('%s/hr_epoch%d_%d.tif' % (opt.out, epoch + 1, count))
             mses, nrmses, psnrs, ssims = img_comp(
                 hr_j.numpy(), sr_j.numpy(), mses, nrmses, psnrs, ssims
             )

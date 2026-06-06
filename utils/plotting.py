@@ -2,14 +2,19 @@ import time
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import torchvision.transforms as transforms
 from PIL import Image
 from skimage.metrics import structural_similarity
 
 plt.switch_backend('agg')
 
-toTensor = transforms.ToTensor()
-toPIL = transforms.ToPILImage()
+
+def toPIL(tensor):
+    array = tensor.detach().cpu().float().numpy()
+    array = np.squeeze(array)
+    if array.ndim == 3:
+        array = np.transpose(array, (1, 2, 0))
+    array = np.clip(array, 0, 1)
+    return Image.fromarray((array * 255).astype(np.uint8))
 
 
 def testAndMakeCombinedPlots(net, loader, opt, idx=0):

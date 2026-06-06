@@ -70,6 +70,8 @@ def SIM_reconstruct9(model, opt):
 
     for iidx, imgfile in enumerate(files):
         print('[%d/%d] Reconstructing %s' % (iidx + 1, len(files), imgfile))
+        basename = os.path.basename(imgfile)
+        
         stack = io.imread(imgfile)
 
         if stack.ndim == 3:

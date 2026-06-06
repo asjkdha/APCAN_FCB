@@ -56,12 +56,14 @@ class CustomDatasetDataLoader:
 
 
 def get_data_loader(opt):
-    if opt.dataset.lower() == 't-sim':
+    dataset_name = opt.dataset.lower()
+
+    if dataset_name in ['t-sim', 'f-actin']:
         dataloader = load_sim_dataset(opt, 'train')
         validloader = load_sim_dataset(opt, 'valid')
     else:
-        print('unknown dataset')
-        return None, None
+        raise ValueError(f"Unknown dataset: {opt.dataset}")
+
     return dataloader, validloader
 
 

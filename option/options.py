@@ -3,7 +3,7 @@ import sys
 
 # training options
 parser = argparse.ArgumentParser()
-parser.add_argument('--preset', type=str, default='fcb_debug',
+parser.add_argument('--preset', type=str, default='fcb_medium',
                     choices=['fcb_debug', 'fcb_small', 'fcb_medium', 'apcan_base'],
                     help='preset training configuration')
 parser.add_argument('--model', type=str, default='apcan_1_actin', help='model to use')
@@ -20,12 +20,12 @@ parser.add_argument('--gradient_clipping', type=float, default=0.5)
 parser.add_argument('--alpha', type=float, default=0.1)
 
 # data_preprocess
-parser.add_argument('--dataset', type=str, default='T-SIM', help='dataset to train')
+parser.add_argument('--dataset', type=str, default='F-actin', help='dataset to train')
 parser.add_argument('--imageSize', type=int, default=502, help='the low resolution image size')
 parser.add_argument('--weights', type=str, default='', help='model to retrain from')
 parser.add_argument('--basedir', type=str, default='',
                     help='path to prepend to all others paths: root, output, weights')
-parser.add_argument('--root', type=str, default='./dataset', help='dataset to train')
+parser.add_argument('--root', type=str, default='/data5/lyhe/python/FFTlearn_complex2_lotdata/dataset/', help='dataset to train')
 parser.add_argument('--out', type=str, default='checkpoint', help='folder to output model training test_results')
 parser.add_argument('--disposableTrainingData', action='store_true',
                     help='whether to delete training data_preprocess after training')
@@ -175,7 +175,7 @@ def apply_preset(opt, cli_keys):
         'fcb_medium': {
             'use_fcb': True,
             'model': 'apcan_1_actin',
-            'root': './dataset/F-actin',
+            'root': '/data5/lyhe/python/FFTlearn_complex2_lotdata/dataset/F-actin/',
             'out': 'checkpoint',
             'imageSize': 502,
             'fcb_rows': 502,
@@ -187,7 +187,7 @@ def apply_preset(opt, cli_keys):
             'batchSize_test': 1,
             'n_resgroups': 2,
             'n_resblocks': 2,
-            'n_feats': 64,
+            'n_feats': 32,
             'reduction': 16,
             'lr': 1e-4,
             'nepoch': 200,

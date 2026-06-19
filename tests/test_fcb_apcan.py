@@ -256,6 +256,60 @@ class TestScriptTests(unittest.TestCase):
         self.assertEqual(norm_frames.dtype, np.float32)
         self.assertTrue(np.allclose(norm_frames, np.clip((frames - vmin) / denom, 0, 1)))
 
+    def test_discover_test_groups_finds_level_subdirectories(self):
+        test_script = importlib.import_module("test")
+
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "level_02"))
+            os.makedirs(os.path.join(root, "level_01"))
+            open(os.path.join(root, "level_02", "002.tif"), "wb").close()
+            open(os.path.join(root, "level_01", "001.tif"), "wb").close()
+
+            groups = test_script.discover_test_groups(root)
+
+        self.assertEqual([name for name, _ in groups], ["level_01", "level_02"])
+
+    def test_discover_test_groups_treats_flat_tif_directory_as_one_group(self):
+        test_script = importlib.import_module("test")
+
+        with tempfile.TemporaryDirectory() as root:
+            open(os.path.join(root, "002.tif"), "wb").close()
+            open(os.path.join(root, "001.tif"), "wb").close()
+
+            groups = test_script.discover_test_groups(root)
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0][0], os.path.basename(root))
+        self.assertEqual(groups[0][1], root)
+
+    def test_resolve_gt_path_supports_mirrored_level_or_flat_gt_root(self):
+        test_script = importlib.import_module("test")
+
+        with tempfile.TemporaryDirectory() as gt_root:
+            os.makedirs(os.path.join(gt_root, "level_12"))
+            mirrored = os.path.join(gt_root, "level_12", "001.tif")
+            flat = os.path.join(gt_root, "002.tif")
+            open(mirrored, "wb").close()
+            open(flat, "wb").close()
+
+            self.assertEqual(
+                test_script.resolve_gt_path(gt_root, "level_12", "001.tif"),
+                mirrored,
+            )
+            self.assertEqual(
+                test_script.resolve_gt_path(gt_root, "level_12", "002.tif"),
+                flat,
+            )
+
+    def test_compute_image_metrics_is_high_for_identical_images(self):
+        test_script = importlib.import_module("test")
+        image = np.arange(64, dtype=np.float32).reshape(8, 8)
+
+        psnr, ssim = test_script.compute_image_metrics(image, image)
+
+        self.assertTrue(np.isinf(psnr) or psnr > 90)
+        self.assertAlmostEqual(ssim, 1.0, places=6)
+
 
 class CheckpointTests(unittest.TestCase):
     def test_load_checkpoint_flexible_strips_module_prefix(self):

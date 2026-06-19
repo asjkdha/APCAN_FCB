@@ -52,6 +52,22 @@ parser.add_argument('--nch_out', type=int, default=1, help='channels in output')
 parser.add_argument('--use_fcb', action='store_true', help='replace APCALayer with FCBLayer')
 parser.add_argument('--fcb_rows', type=int, default=502, help='FCB fixed input height')
 parser.add_argument('--fcb_cols', type=int, default=502, help='FCB fixed input width')
+parser.add_argument('--fcb_init', type=str, default='he', choices=['he', 'glorot'],
+                    help='FCB complex kernel initialization')
+parser.add_argument('--fcb_alpha', type=float, default=0.7,
+                    help='mode rebalancing radial exponent')
+parser.add_argument('--fcb_gamma_init', type=float, default=1e-3,
+                    help='initial effective value for radial and SIM mode rebalancing gammas')
+parser.add_argument('--fcb_rho_min', type=float, default=0.25,
+                    help='SIM high-frequency gate threshold')
+parser.add_argument('--fcb_tau', type=float, default=0.05,
+                    help='SIM high-frequency gate softness')
+parser.add_argument('--fcb_sigma_theta', type=float, default=0.17453292519943295,
+                    help='SIM directional soft-sector width in radians')
+parser.add_argument('--fcb_directions', type=str, default='0,60,120',
+                    help='comma-separated SIM line-orientation directions in degrees')
+parser.add_argument('--fcb_residual_scale', type=float, default=1e-3,
+                    help='initial residual scale for FCBLayer output')
 
 # architecture options 
 parser.add_argument('--narch', type=int, default=0, help='architecture-dependent parameter')
@@ -78,6 +94,14 @@ RESTORABLE_OPTION_KEYS = [
     'use_fcb',
     'fcb_rows',
     'fcb_cols',
+    'fcb_init',
+    'fcb_alpha',
+    'fcb_gamma_init',
+    'fcb_rho_min',
+    'fcb_tau',
+    'fcb_sigma_theta',
+    'fcb_directions',
+    'fcb_residual_scale',
     'imageSize',
     'scale',
     'nch_in',
@@ -114,6 +138,18 @@ def set_if_not_cli(opt, key, value, cli_keys):
         setattr(opt, key, value)
 
 
+FCB_DEFAULTS = {
+    'fcb_init': 'he',
+    'fcb_alpha': 0.7,
+    'fcb_gamma_init': 1e-3,
+    'fcb_rho_min': 0.25,
+    'fcb_tau': 0.05,
+    'fcb_sigma_theta': 0.17453292519943295,
+    'fcb_directions': '0,60,120',
+    'fcb_residual_scale': 1e-3,
+}
+
+
 def apply_preset(opt, cli_keys):
     presets = {
         'fcb_debug': {
@@ -124,6 +160,7 @@ def apply_preset(opt, cli_keys):
             'imageSize': 502,
             'fcb_rows': 502,
             'fcb_cols': 502,
+            **FCB_DEFAULTS,
             'scale': 2,
             'nch_in': 9,
             'nch_out': 1,
@@ -152,6 +189,7 @@ def apply_preset(opt, cli_keys):
             'imageSize': 502,
             'fcb_rows': 502,
             'fcb_cols': 502,
+            **FCB_DEFAULTS,
             'scale': 2,
             'nch_in': 9,
             'nch_out': 1,
@@ -180,6 +218,7 @@ def apply_preset(opt, cli_keys):
             'imageSize': 502,
             'fcb_rows': 502,
             'fcb_cols': 502,
+            **FCB_DEFAULTS,
             'scale': 2,
             'nch_in': 9,
             'nch_out': 1,
@@ -208,6 +247,7 @@ def apply_preset(opt, cli_keys):
             'imageSize': 502,
             'fcb_rows': 502,
             'fcb_cols': 502,
+            **FCB_DEFAULTS,
             'scale': 2,
             'nch_in': 9,
             'nch_out': 1,

@@ -122,7 +122,22 @@ class APCAB(nn.Module):
         if use_fcb:
             fcb_rows = getattr(opt, 'fcb_rows', 502)
             fcb_cols = getattr(opt, 'fcb_cols', 502)
-            modules_body.append(FCBLayer(n_feat, fcb_rows, fcb_cols, act=act))
+            modules_body.append(
+                FCBLayer(
+                    n_feat,
+                    fcb_rows,
+                    fcb_cols,
+                    act=act,
+                    init=getattr(opt, 'fcb_init', 'he'),
+                    alpha=getattr(opt, 'fcb_alpha', 0.7),
+                    gamma_init=getattr(opt, 'fcb_gamma_init', 1e-3),
+                    rho_min=getattr(opt, 'fcb_rho_min', 0.25),
+                    tau=getattr(opt, 'fcb_tau', 0.05),
+                    sigma_theta=getattr(opt, 'fcb_sigma_theta', 0.17453292519943295),
+                    directions=getattr(opt, 'fcb_directions', None),
+                    residual_scale=getattr(opt, 'fcb_residual_scale', 1e-3),
+                )
+            )
         else:
             modules_body.append(APCALayer(conv, n_feat, kernel_size, reduction, act=act))
         self.body = nn.Sequential(*modules_body)

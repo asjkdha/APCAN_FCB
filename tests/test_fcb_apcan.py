@@ -68,6 +68,48 @@ class APCANIntegrationTests(unittest.TestCase):
         ):
             model(torch.randn(1, 9, 8, 8))
 
+    def test_apcan_passes_fcb_options_to_layer(self):
+        from models.APCAN_1 import APCAN
+        from models.fcb import FCBLayer
+
+        opt = Namespace(
+            scale=2,
+            nch_out=1,
+            use_fcb=True,
+            fcb_rows=16,
+            fcb_cols=16,
+            fcb_init="glorot",
+            fcb_alpha=0.9,
+            fcb_gamma_init=0.002,
+            fcb_rho_min=0.35,
+            fcb_tau=0.08,
+            fcb_sigma_theta=0.2,
+            fcb_directions="0,45,90",
+            fcb_residual_scale=0.004,
+            n_resgroups=1,
+            n_resblocks=1,
+            n_feats=4,
+            reduction=2,
+        )
+
+        model = APCAN(opt)
+        fcb_layer = next(module for module in model.modules() if isinstance(module, FCBLayer))
+        fourier = fcb_layer.global_branch.fourier
+        prior = fourier.freq_prior
+
+        self.assertAlmostEqual(fourier.alpha, 0.9)
+        self.assertAlmostEqual(
+            float(torch.nn.functional.softplus(fourier.raw_gamma_rad).detach()), 0.002
+        )
+        self.assertAlmostEqual(
+            float(torch.nn.functional.softplus(fourier.raw_gamma_sim).detach()), 0.002
+        )
+        self.assertAlmostEqual(float(fcb_layer.residual_scale.detach()), 0.004)
+        self.assertAlmostEqual(prior.rho_min, 0.35)
+        self.assertAlmostEqual(prior.tau, 0.08)
+        self.assertAlmostEqual(prior.sigma_theta, 0.2)
+        self.assertTrue(np.allclose(prior.directions, [0.0, np.pi / 4.0, np.pi / 2.0]))
+
 
 class DataPreprocessTests(unittest.TestCase):
     def test_shared_percentile_normalize_uses_raw_range_and_adds_gt_channel(self):
@@ -170,6 +212,23 @@ class GTMappingTests(unittest.TestCase):
 
 
 class PresetTests(unittest.TestCase):
+    def test_parser_exposes_fcb_control_options(self):
+        from option.options import parser
+
+        action_dests = {action.dest for action in parser._actions}
+
+        for key in [
+            "fcb_init",
+            "fcb_alpha",
+            "fcb_gamma_init",
+            "fcb_rho_min",
+            "fcb_tau",
+            "fcb_sigma_theta",
+            "fcb_directions",
+            "fcb_residual_scale",
+        ]:
+            self.assertIn(key, action_dests)
+
     def test_apply_preset_sets_defaults_but_preserves_cli_overrides(self):
         from option.options import apply_preset, parser
 
@@ -231,6 +290,23 @@ class PresetTests(unittest.TestCase):
 
 
 class TestScriptTests(unittest.TestCase):
+    def test_test_arg_parser_exposes_fcb_control_options(self):
+        test_script = importlib.import_module("test")
+        parser = test_script.build_arg_parser()
+        action_dests = {action.dest for action in parser._actions}
+
+        for key in [
+            "fcb_init",
+            "fcb_alpha",
+            "fcb_gamma_init",
+            "fcb_rho_min",
+            "fcb_tau",
+            "fcb_sigma_theta",
+            "fcb_directions",
+            "fcb_residual_scale",
+        ]:
+            self.assertIn(key, action_dests)
+
     def test_extract_sim_frames_accepts_3d_and_4d_stacks(self):
         test_script = importlib.import_module("test")
         stack3 = np.arange(10 * 4 * 4, dtype=np.float32).reshape(10, 4, 4)

@@ -30,6 +30,14 @@ opt.nch_out = 1
 opt.fcb_rows = 502
 opt.fcb_cols = 502
 opt.use_fcb = True
+opt.fcb_init = 'he'
+opt.fcb_alpha = 0.7
+opt.fcb_gamma_init = 1e-3
+opt.fcb_rho_min = 0.25
+opt.fcb_tau = 0.05
+opt.fcb_sigma_theta = 0.17453292519943295
+opt.fcb_directions = '0,60,120'
+opt.fcb_residual_scale = 1e-3
 
 # architecture options
 opt.narch = 0
@@ -203,6 +211,14 @@ def build_arg_parser():
     parser.add_argument('--nch_out', type=int, default=opt.nch_out)
     parser.add_argument('--fcb_rows', type=int, default=opt.fcb_rows)
     parser.add_argument('--fcb_cols', type=int, default=opt.fcb_cols)
+    parser.add_argument('--fcb_init', type=str, default=opt.fcb_init, choices=['he', 'glorot'])
+    parser.add_argument('--fcb_alpha', type=float, default=opt.fcb_alpha)
+    parser.add_argument('--fcb_gamma_init', type=float, default=opt.fcb_gamma_init)
+    parser.add_argument('--fcb_rho_min', type=float, default=opt.fcb_rho_min)
+    parser.add_argument('--fcb_tau', type=float, default=opt.fcb_tau)
+    parser.add_argument('--fcb_sigma_theta', type=float, default=opt.fcb_sigma_theta)
+    parser.add_argument('--fcb_directions', type=str, default=opt.fcb_directions)
+    parser.add_argument('--fcb_residual_scale', type=float, default=opt.fcb_residual_scale)
     parser.add_argument('--use_fcb', dest='use_fcb', action='store_true')
     parser.add_argument('--no_use_fcb', dest='use_fcb', action='store_false')
     parser.set_defaults(use_fcb=opt.use_fcb)

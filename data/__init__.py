@@ -1,6 +1,7 @@
 import importlib
 import torch.utils.data
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from data.sim_dataset import SIMDataset
 
 
@@ -35,7 +36,8 @@ class CustomDatasetDataLoader:
         self.opt = opt
         dataset_class = find_dataset_using_name(opt.dataset_mode)
         self.dataset = dataset_class(opt, 'train')
-        print("dataset [%s] was created" % type(self.dataset).__name__)
+        if getattr(opt, 'rank', 0) == 0:
+            print("dataset [%s] was created" % type(self.dataset).__name__)
         self.dataloader = torch.utils.data.DataLoader(
             self.dataset,
             batch_size=opt.batch_size,
@@ -70,7 +72,23 @@ def get_data_loader(opt):
 def load_sim_dataset(opt, category):
     dataset = SIMDataset(opt, category)
     if category == 'train':
-        dataloader = DataLoader(dataset, batch_size=opt.batchSize, shuffle=True, num_workers=0)
-    else:
-        dataloader = DataLoader(dataset, batch_size=opt.batchSize_test, shuffle=False, num_workers=0)
-    return dataloader
+        sampler = None
+        shuffle = True
+        if getattr(opt, 'distributed', False):
+            sampler = DistributedSampler(
+                dataset,
+                num_replicas=opt.world_size,
+                rank=opt.rank,
+                shuffle=True,
+                drop_last=True,
+            )
+            shuffle = False
+        return DataLoader(
+            dataset,
+            batch_size=opt.batchSize,
+            shuffle=shuffle,
+            sampler=sampler,
+            num_workers=0,
+        )
+
+    return DataLoader(dataset, batch_size=opt.batchSize_test, shuffle=False, num_workers=0)

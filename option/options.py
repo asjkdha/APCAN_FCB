@@ -44,6 +44,26 @@ parser.add_argument('--gt_index_start', type=int, default=1,
 # computation 
 parser.add_argument('--workers', type=int, default=4, help='number of data_preprocess loading workers')
 parser.add_argument('--batchSize', type=int, default=6, help='input batch size')
+parser.add_argument('--distributed', action='store_true',
+                    help='enable torch.distributed training launched by torchrun')
+parser.add_argument('--dist_backend', type=str, default='fsdp', choices=['ddp', 'fsdp'],
+                    help='distributed wrapper: ddp or fsdp')
+parser.add_argument('--local_rank', type=int, default=-1,
+                    help='local rank, normally provided by torchrun through env LOCAL_RANK')
+parser.add_argument('--amp', action='store_true',
+                    help='enable torch.cuda.amp mixed precision training')
+parser.add_argument('--amp_dtype', type=str, default='fp16', choices=['fp16', 'bf16'],
+                    help='AMP dtype')
+parser.add_argument('--grad_accum_steps', type=int, default=1,
+                    help='gradient accumulation steps')
+parser.add_argument('--fsdp_cpu_offload', action='store_true',
+                    help='enable FSDP CPU offload, slower but may reduce GPU memory')
+parser.add_argument('--fsdp_mixed_precision', action='store_true',
+                    help='enable FSDP mixed precision policy')
+parser.add_argument('--activation_checkpoint', action='store_true',
+                    help='enable activation checkpointing for selected model blocks')
+parser.add_argument('--save_on_rank0_only', action='store_true', default=True,
+                    help='save checkpoints and plots only on rank 0 in distributed training')
 
 # restoration options
 parser.add_argument('--scale', type=int, default=2, help='low to high resolution scaling factor')
@@ -111,6 +131,16 @@ RESTORABLE_OPTION_KEYS = [
     'n_feats',
     'reduction',
     'batchSize',
+    'distributed',
+    'dist_backend',
+    'local_rank',
+    'amp',
+    'amp_dtype',
+    'grad_accum_steps',
+    'fsdp_cpu_offload',
+    'fsdp_mixed_precision',
+    'activation_checkpoint',
+    'save_on_rank0_only',
     'batchSize_test',
     'gt_mapping_mode',
     'gt_group_size',

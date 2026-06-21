@@ -229,6 +229,26 @@ class PresetTests(unittest.TestCase):
         ]:
             self.assertIn(key, action_dests)
 
+    def test_parser_exposes_distributed_options(self):
+        from option.options import RESTORABLE_OPTION_KEYS, parser
+
+        action_dests = {action.dest for action in parser._actions}
+
+        for key in [
+            "distributed",
+            "dist_backend",
+            "local_rank",
+            "amp",
+            "amp_dtype",
+            "grad_accum_steps",
+            "fsdp_cpu_offload",
+            "fsdp_mixed_precision",
+            "activation_checkpoint",
+            "save_on_rank0_only",
+        ]:
+            self.assertIn(key, action_dests)
+            self.assertIn(key, RESTORABLE_OPTION_KEYS)
+
     def test_apply_preset_sets_defaults_but_preserves_cli_overrides(self):
         from option.options import apply_preset, parser
 
@@ -385,6 +405,83 @@ class TestScriptTests(unittest.TestCase):
 
         self.assertTrue(np.isinf(psnr) or psnr > 90)
         self.assertAlmostEqual(ssim, 1.0, places=6)
+
+
+class DistributedTrainingTests(unittest.TestCase):
+    def _small_opt(self, **overrides):
+        values = dict(
+            model="apcan_1_actin",
+            cpu=True,
+            device=torch.device("cpu"),
+            scale=2,
+            nch_out=1,
+            use_fcb=False,
+            n_resgroups=1,
+            n_resblocks=1,
+            n_feats=4,
+            reduction=2,
+            activation_checkpoint=False,
+        )
+        values.update(overrides)
+        return Namespace(**values)
+
+    def test_get_model_does_not_wrap_dataparallel(self):
+        from models import get_model
+
+        opt = self._small_opt(cpu=False)
+        with patch("models.torch.cuda.is_available", return_value=True), \
+                patch.object(torch.nn.Module, "cuda", lambda module: module), \
+                patch("torch.nn.DataParallel") as data_parallel:
+            model = get_model(opt)
+
+        self.assertIsInstance(model, torch.nn.Module)
+        self.assertFalse(data_parallel.called)
+
+    def test_train_loader_uses_distributed_sampler(self):
+        import data
+        from torch.utils.data.distributed import DistributedSampler
+
+        class TinyDataset(torch.utils.data.Dataset):
+            def __len__(self):
+                return 4
+
+            def __getitem__(self, index):
+                return {"index": index}
+
+        opt = Namespace(
+            distributed=True,
+            world_size=2,
+            rank=1,
+            batchSize=1,
+            batchSize_test=1,
+        )
+        with patch("data.SIMDataset", return_value=TinyDataset()):
+            loader = data.load_sim_dataset(opt, "train")
+
+        self.assertIsInstance(loader.sampler, DistributedSampler)
+        self.assertEqual(loader.sampler.num_replicas, 2)
+        self.assertEqual(loader.sampler.rank, 1)
+
+    def test_setup_distributed_reads_torchrun_env(self):
+        from utils.distributed import setup_distributed
+
+        opt = Namespace(cpu=False, distributed=False, local_rank=-1)
+        env = {"RANK": "1", "WORLD_SIZE": "2", "LOCAL_RANK": "1"}
+        with patch.dict(os.environ, env, clear=False), \
+                patch("utils.distributed.torch.cuda.is_available", return_value=True), \
+                patch("utils.distributed.torch.cuda.set_device") as set_device, \
+                patch("utils.distributed.dist.is_available", return_value=True), \
+                patch("utils.distributed.dist.is_initialized", return_value=False), \
+                patch("utils.distributed.dist.init_process_group") as init_process_group:
+            setup_distributed(opt)
+
+        self.assertTrue(opt.distributed)
+        self.assertEqual(opt.rank, 1)
+        self.assertEqual(opt.world_size, 2)
+        self.assertEqual(opt.local_rank, 1)
+        self.assertEqual(opt.device, torch.device("cuda", 1))
+        set_device.assert_called_once_with(1)
+        init_process_group.assert_called_once_with(backend="nccl", init_method="env://")
 
 
 class CheckpointTests(unittest.TestCase):

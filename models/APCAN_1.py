@@ -157,9 +157,13 @@ class ResidualGroup(nn.Module):
             ) for _ in range(n_resblocks)]
         modules_body.append(conv(n_feat, n_feat, kernel_size))
         self.body = nn.Sequential(*modules_body)
+        self.activation_checkpoint = False if opt is None else getattr(opt, 'activation_checkpoint', False)
 
     def forward(self, x):
-        res = self.body(x)
+        if self.activation_checkpoint and self.training:
+            res = checkpoint(self.body, x, use_reentrant=False)
+        else:
+            res = self.body(x)
         res += x
         return res
 

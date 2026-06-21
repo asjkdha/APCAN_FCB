@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from torch.nn import init
 from models.APCAN_1 import APCAN as APCAN_1
 
@@ -31,15 +30,13 @@ def init_net(net, init_type='kaiming', init_gain=0.02, debug=False):
 
 
 def get_model(opt):
-    print("---------------------------------{}-------------------------".format(opt.model))
+    if getattr(opt, 'rank', 0) == 0:
+        print("---------------------------------{}-------------------------".format(opt.model))
 
     if opt.model.lower()[0:7] != 'apcan_1':
         raise ValueError("Only apcan_1 is kept. Please set opt.model to apcan_1_actin or apcan_1_er.")
 
     net = APCAN_1(opt)
-
-    if torch.cuda.is_available() and not getattr(opt, 'cpu', False):
-        net.cuda()
-        net = nn.DataParallel(net)
-
-    return init_net(net, init_type='normal', init_gain=0.02)
+    net = init_net(net, init_type='normal', init_gain=0.02)
+    net.to(opt.device)
+    return net

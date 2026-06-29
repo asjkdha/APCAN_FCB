@@ -1,4 +1,5 @@
 import importlib
+import io
 import os
 import sys
 import tempfile
@@ -40,6 +41,23 @@ class FCBLayerTests(unittest.TestCase):
         x = torch.randn(1, 2, 8, 10)
 
         self.assertTrue(torch.allclose(layer(x), x))
+
+    def test_deepsparse_uses_float32_fft_for_half_inputs(self):
+        from models.fcb import DeepSparse
+
+        layer = DeepSparse(channels=1, num_rows=8, num_cols=10)
+        x = torch.randn(1, 1, 8, 10).half()
+        seen_dtypes = []
+        original_rfftn = torch.fft.rfftn
+
+        def wrapped_rfftn(input_tensor, *args, **kwargs):
+            seen_dtypes.append(input_tensor.dtype)
+            return original_rfftn(input_tensor.float(), *args, **kwargs)
+
+        with patch("models.fcb.torch.fft.rfftn", side_effect=wrapped_rfftn):
+            layer(x)
+
+        self.assertEqual(seen_dtypes[0], torch.float32)
 
 
 class APCANIntegrationTests(unittest.TestCase):
@@ -482,6 +500,101 @@ class DistributedTrainingTests(unittest.TestCase):
         self.assertEqual(opt.device, torch.device("cuda", 1))
         set_device.assert_called_once_with(1)
         init_process_group.assert_called_once_with(backend="nccl", init_method="env://")
+
+    def test_ddp_uses_find_unused_parameters_for_reparam_freeze_warmup(self):
+        from utils.distributed import wrap_model_for_training
+
+        model = nn.Linear(2, 2)
+        opt = Namespace(
+            distributed=True,
+            dist_backend="ddp",
+            local_rank=0,
+            fcb_reparam=True,
+            fcb_reparam_freeze_global_before=True,
+            fcb_reparam_epoch=5,
+        )
+
+        with patch("utils.distributed.torch.nn.parallel.DistributedDataParallel") as ddp:
+            wrap_model_for_training(model, opt)
+
+        self.assertTrue(ddp.call_args.kwargs["find_unused_parameters"])
+
+
+class TrainingValidationOutputTests(unittest.TestCase):
+    def test_ddp_rank0_validation_uses_unwrapped_model(self):
+        import train
+
+        inner_model = nn.Linear(2, 2)
+        wrapped_model = Namespace(module=inner_model)
+        opt = Namespace(distributed=True, dist_backend="ddp")
+
+        self.assertIs(train.get_rank0_validation_model(wrapped_model, opt), inner_model)
+
+    def test_validate_does_not_write_epoch_tif_preview_files(self):
+        import train
+
+        class TinyNet(nn.Module):
+            def forward(self, x):
+                return torch.ones(x.shape[0], 1, x.shape[-2], x.shape[-1])
+
+        batch = {
+            "sim_inputs": torch.ones(1, 9, 8, 8),
+            "sim_gt": torch.ones(1, 1, 8, 8),
+            "wf": torch.ones(1, 1, 8, 8),
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            opt = Namespace(
+                device=torch.device("cpu"),
+                out=tmpdir,
+                ntest=1,
+                nplot=4,
+                plotinterval=1,
+                nepoch=1,
+                fid=io.StringIO(),
+            )
+            with patch(
+                "train.img_comp",
+                return_value=([0.0], [0.0], [99.0], [1.0]),
+            ):
+                train.validate(opt, [batch], TinyNet(), 0, optimizer=None, scheduler=None, validate_nrmse=[float("inf")])
+
+            self.assertFalse(
+                any(name.endswith(".tif") for name in os.listdir(tmpdir))
+            )
+
+
+class AMPCompatibilityTests(unittest.TestCase):
+    def test_amp_helpers_fall_back_to_cuda_amp_api(self):
+        import train
+
+        class FakeGradScaler:
+            def __init__(self, enabled):
+                self.enabled = enabled
+
+        class FakeAutocast:
+            def __init__(self, enabled, dtype=None):
+                self.enabled = enabled
+                self.dtype = dtype
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        fake_cuda_amp = Namespace(GradScaler=FakeGradScaler, autocast=FakeAutocast)
+
+        with patch.object(train.torch, "amp", Namespace(), create=True), \
+                patch.object(train.torch.cuda, "amp", fake_cuda_amp, create=True):
+            scaler = train.make_grad_scaler(Namespace(amp_dtype="fp16"), amp_enabled=True)
+            autocast_context = train.make_autocast_context(True, torch.float16)
+
+        self.assertIsInstance(scaler, FakeGradScaler)
+        self.assertTrue(scaler.enabled)
+        self.assertIsInstance(autocast_context, FakeAutocast)
+        self.assertTrue(autocast_context.enabled)
+        self.assertEqual(autocast_context.dtype, torch.float16)
 
 
 class CheckpointTests(unittest.TestCase):

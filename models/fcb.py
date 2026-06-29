@@ -1,9 +1,13 @@
 import copy
+import contextlib
 import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+DEFAULT_SIM_DIRECTIONS_DEG = '-5.1966,54.9131,115.0424'
 
 
 def complexinit(weights_real, weights_imag, criterion='he'):
@@ -48,6 +52,24 @@ def clone_activation(act):
     return copy.deepcopy(act)
 
 
+def disabled_autocast_context():
+    amp_module = getattr(torch, 'amp', None)
+    if amp_module is not None and hasattr(amp_module, 'autocast'):
+        try:
+            return amp_module.autocast('cuda', enabled=False)
+        except TypeError:
+            try:
+                return amp_module.autocast(device_type='cuda', enabled=False)
+            except TypeError:
+                return amp_module.autocast(enabled=False)
+
+    cuda_amp = getattr(torch.cuda, 'amp', None)
+    if cuda_amp is not None and hasattr(cuda_amp, 'autocast'):
+        return cuda_amp.autocast(enabled=False)
+
+    return contextlib.nullcontext()
+
+
 def build_rfft_frequency_grid(num_rows, num_cols, dtype=torch.float32):
     if num_rows <= 0 or num_cols <= 0:
         raise ValueError('num_rows and num_cols must be positive')
@@ -68,7 +90,7 @@ def build_rfft_frequency_grid(num_rows, num_cols, dtype=torch.float32):
 
 def parse_sim_directions(directions):
     if directions is None:
-        return [0.0, math.pi / 3.0, 2.0 * math.pi / 3.0]
+        directions = DEFAULT_SIM_DIRECTIONS_DEG
     if isinstance(directions, str):
         parts = [part.strip() for part in directions.split(',') if part.strip()]
         if not parts:
@@ -98,6 +120,7 @@ class SIMFrequencyPrior(nn.Module):
         tau=0.05,
         sigma_theta=math.pi / 18.0,
         directions=None,
+        use_sim_mask=True,
     ):
         super(SIMFrequencyPrior, self).__init__()
         if tau <= 0.0:
@@ -109,6 +132,7 @@ class SIMFrequencyPrior(nn.Module):
         self.tau = float(tau)
         self.sigma_theta = float(sigma_theta)
         self.directions = parse_sim_directions(directions)
+        self.use_sim_mask = bool(use_sim_mask)
 
         rho, theta = build_rfft_frequency_grid(num_rows, num_cols, dtype=torch.float32)
         direction_masks = []
@@ -138,6 +162,7 @@ class DeepSparse(nn.Module):
     The FCB branch computes Y(k1, k2) = X(k1, k2) * P(k1, k2), followed by
     irFFT. It adds the paper-formula mode rebalancing term
     w_SIM(rho, theta) = 1 + gamma_rad * rho**alpha + gamma_sim * M_SIM.
+    When use_sim_mask is False, only the radial term is applied.
     Implemented from the DiffFNO paper formula, because official DiffFNO
     source code is not available.
     """
@@ -154,6 +179,7 @@ class DeepSparse(nn.Module):
         tau=0.05,
         sigma_theta=math.pi / 18.0,
         directions=None,
+        use_sim_mask=True,
     ):
         super(DeepSparse, self).__init__()
         if alpha <= 0.0:
@@ -164,6 +190,7 @@ class DeepSparse(nn.Module):
         self.num_cols = num_cols
         self.size = (num_rows, num_cols)
         self.alpha = float(alpha)
+        self.use_sim_mask = bool(use_sim_mask)
 
         self.weights_real = nn.Parameter(
             torch.Tensor(1, channels, num_rows, num_cols // 2 + 1)
@@ -181,6 +208,7 @@ class DeepSparse(nn.Module):
             tau=tau,
             sigma_theta=sigma_theta,
             directions=directions,
+            use_sim_mask=use_sim_mask,
         )
 
         complexinit(self.weights_real, self.weights_imag, init)
@@ -208,27 +236,43 @@ class DeepSparse(nn.Module):
     def forward(self, x):
         self._check_input(x)
 
-        x_fft = torch.fft.rfftn(x, dim=(-2, -1), norm=None)
-        xr = x_fft.real
-        xi = x_fft.imag
+        input_dtype = x.dtype
+        fft_dtype = torch.float32 if x.dtype in [torch.float16, torch.bfloat16] else x.dtype
 
-        wr = self.weights_real
-        wi = self.weights_imag
-        yr = xr * wr - xi * wi
-        yi = xr * wi + xi * wr
+        with disabled_autocast_context():
+            x_fft = torch.fft.rfftn(x.to(dtype=fft_dtype), dim=(-2, -1), norm=None)
+            xr = x_fft.real
+            xi = x_fft.imag
 
-        gamma_rad = F.softplus(self.raw_gamma_rad)
-        gamma_sim = F.softplus(self.raw_gamma_sim)
-        rho, sim_mask = self.freq_prior.get_weight_terms()
-        rho = rho.to(dtype=yr.dtype)
-        sim_mask = sim_mask.to(dtype=yr.dtype)
-        mode_weight = 1.0 + gamma_rad * torch.pow(rho, self.alpha) + gamma_sim * sim_mask
+            wr = self.weights_real.to(dtype=xr.dtype)
+            wi = self.weights_imag.to(dtype=xr.dtype)
+            yr = xr * wr - xi * wi
+            yi = xr * wi + xi * wr
 
-        yr = yr * mode_weight
-        yi = yi * mode_weight
+            gamma_rad = F.softplus(self.raw_gamma_rad).to(dtype=yr.dtype)
+            gamma_sim = F.softplus(self.raw_gamma_sim).to(dtype=yr.dtype)
+            rho, sim_mask = self.freq_prior.get_weight_terms()
+            rho = rho.to(dtype=yr.dtype)
+            sim_mask = sim_mask.to(dtype=yr.dtype)
+            mode_weight = 1.0 + gamma_rad * torch.pow(rho, self.alpha)
+            if self.use_sim_mask:
+                mode_weight = mode_weight + gamma_sim * sim_mask
 
-        y_fft = torch.complex(yr, yi)
-        return torch.fft.irfftn(y_fft, s=self.size, dim=(-2, -1), norm=None)
+            yr = yr * mode_weight
+            yi = yi * mode_weight
+
+            y_fft = torch.complex(yr, yi)
+            y = torch.fft.irfftn(y_fft, s=self.size, dim=(-2, -1), norm=None)
+
+        if input_dtype in [torch.float16, torch.bfloat16]:
+            y = y.to(dtype=input_dtype)
+        return y
+
+    def get_gamma_values(self):
+        return {
+            'gamma_rad': float(F.softplus(self.raw_gamma_rad).detach().cpu()),
+            'gamma_sim': float(F.softplus(self.raw_gamma_sim).detach().cpu()),
+        }
 
     def loadweight(self, ilayer):
         if not isinstance(ilayer, nn.Conv2d):
@@ -316,6 +360,7 @@ class GlobalMRFCBBranch(nn.Module):
         tau=0.05,
         sigma_theta=math.pi / 18.0,
         directions=None,
+        use_sim_mask=True,
     ):
         super(GlobalMRFCBBranch, self).__init__()
         self.fourier = DeepSparse(
@@ -329,6 +374,7 @@ class GlobalMRFCBBranch(nn.Module):
             tau=tau,
             sigma_theta=sigma_theta,
             directions=directions,
+            use_sim_mask=use_sim_mask,
         )
         self.pointwise = nn.Conv2d(channels, channels, 1, bias=True)
         self.act = clone_activation(act)
@@ -383,7 +429,8 @@ class FCBLayer(nn.Module):
         tau=0.05,
         sigma_theta=math.pi / 18.0,
         directions=None,
-        residual_scale=1e-3,
+        residual_scale=1e-2,
+        use_sim_mask=True,
     ):
         super(FCBLayer, self).__init__()
         self.n_feat = n_feat
@@ -402,10 +449,21 @@ class FCBLayer(nn.Module):
             tau=tau,
             sigma_theta=sigma_theta,
             directions=directions,
+            use_sim_mask=use_sim_mask,
         )
         self.local_branch = LocalDWBranch(n_feat, act)
         self.fusion = GatedFusion(n_feat)
         self.residual_scale = nn.Parameter(torch.tensor(float(residual_scale), dtype=torch.float32))
+        self.last_gate_mean = None
+        self.last_gate_std = None
+        self.last_gate_min = None
+        self.last_gate_max = None
+        self.last_global_mean = None
+        self.last_global_std = None
+        self.last_local_mean = None
+        self.last_local_std = None
+        self.last_fused_mean = None
+        self.last_fused_std = None
 
     @property
     def fourier(self):
@@ -414,6 +472,47 @@ class FCBLayer(nn.Module):
     @property
     def pointwise(self):
         return self.fusion.proj
+
+    @staticmethod
+    def _scalar_mean(tensor):
+        return float(tensor.detach().mean().cpu())
+
+    @staticmethod
+    def _scalar_std(tensor):
+        return float(tensor.detach().std(unbiased=False).cpu())
+
+    def _record_diagnostics(self, v_global, v_local, fused, gate):
+        self.last_gate_mean = self._scalar_mean(gate)
+        self.last_gate_std = self._scalar_std(gate)
+        self.last_gate_min = float(gate.detach().min().cpu())
+        self.last_gate_max = float(gate.detach().max().cpu())
+        self.last_global_mean = self._scalar_mean(v_global)
+        self.last_global_std = self._scalar_std(v_global)
+        self.last_local_mean = self._scalar_mean(v_local)
+        self.last_local_std = self._scalar_std(v_local)
+        self.last_fused_mean = self._scalar_mean(fused)
+        self.last_fused_std = self._scalar_std(fused)
+
+    def reparameterize_fourier_from_local(self, source='local_dw1'):
+        if source == 'local_dw1':
+            conv = self.local_branch.depthwise1
+        elif source == 'local_dw2':
+            conv = self.local_branch.depthwise2
+        else:
+            raise ValueError("source must be 'local_dw1' or 'local_dw2'")
+
+        try:
+            self.global_branch.fourier.loadweight(conv)
+        except Exception as exc:
+            raise RuntimeError(
+                f'Failed to reparameterize FCBLayer Fourier kernel from {source}: {exc}'
+            ) from exc
+        return True
+
+    def set_global_branch_trainable(self, trainable=True):
+        for param in self.global_branch.parameters():
+            param.requires_grad = bool(trainable)
+        return True
 
     def _check_input(self, x):
         if x.dim() != 4:
@@ -440,4 +539,6 @@ class FCBLayer(nn.Module):
         v_global = self.global_branch(x)
         v_local = self.local_branch(x)
         fused, gate = self.fusion(v_global, v_local)
+        if self.training:
+            self._record_diagnostics(v_global, v_local, fused, gate)
         return x + self.residual_scale * fused

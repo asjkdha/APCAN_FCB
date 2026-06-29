@@ -87,11 +87,20 @@ def wrap_model_for_training(model, opt):
         return model
 
     if getattr(opt, 'dist_backend', 'fsdp') == 'ddp':
+        find_unused_parameters = bool(
+            getattr(opt, 'ddp_find_unused_parameters', False)
+            or (
+                getattr(opt, 'fcb_reparam', False)
+                and getattr(opt, 'fcb_reparam_freeze_global_before', False)
+                and getattr(opt, 'fcb_reparam_epoch', 0) > 0
+            )
+            or not getattr(opt, 'fcb_use_sim_mask', True)
+        )
         return torch.nn.parallel.DistributedDataParallel(
             model,
             device_ids=[opt.local_rank],
             output_device=opt.local_rank,
-            find_unused_parameters=False,
+            find_unused_parameters=find_unused_parameters,
         )
 
     if getattr(opt, 'dist_backend', 'fsdp') == 'fsdp':

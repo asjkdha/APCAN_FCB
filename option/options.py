@@ -84,10 +84,33 @@ parser.add_argument('--fcb_tau', type=float, default=0.05,
                     help='SIM high-frequency gate softness')
 parser.add_argument('--fcb_sigma_theta', type=float, default=0.17453292519943295,
                     help='SIM directional soft-sector width in radians')
-parser.add_argument('--fcb_directions', type=str, default='0,60,120',
+parser.add_argument('--fcb_directions', type=str, default='-5.1966,54.9131,115.0424',
                     help='comma-separated SIM line-orientation directions in degrees')
-parser.add_argument('--fcb_residual_scale', type=float, default=1e-3,
+parser.add_argument('--fcb_residual_scale', type=float, default=1e-2,
                     help='initial residual scale for FCBLayer output')
+parser.add_argument('--fcb_diag', action='store_true',
+                    help='record MRFCB diagnostic statistics during training')
+parser.add_argument('--fcb_diag_interval', type=int, default=1,
+                    help='epoch interval for MRFCB diagnostic logging')
+parser.add_argument('--fft_loss_weight', type=float, default=0.0,
+                    help='weight for FFT log-amplitude loss, default 0 disables it')
+parser.add_argument('--fft_loss_warmup_epochs', type=int, default=0,
+                    help='linearly ramp FFT loss weight during first N epochs')
+parser.add_argument('--fft_loss_start_epoch', type=int, default=0,
+                    help='start applying FFT loss after this epoch index, 0-based')
+parser.add_argument('--fcb_use_sim_mask', action='store_true', default=True,
+                    help='use SIM directional mask in mode rebalancing')
+parser.add_argument('--fcb_no_sim_mask', dest='fcb_use_sim_mask', action='store_false',
+                    help='disable SIM directional mask and use radial-only mode rebalancing')
+parser.add_argument('--fcb_reparam', action='store_true',
+                    help='enable FCB re-parameterization from local depth-wise conv to Fourier kernel')
+parser.add_argument('--fcb_reparam_epoch', type=int, default=0,
+                    help='epoch index at which to apply FCB re-parameterization; 0 means before training')
+parser.add_argument('--fcb_reparam_source', type=str, default='local_dw1',
+                    choices=['local_dw1', 'local_dw2'],
+                    help='which local depth-wise conv to convert into DeepSparse Fourier kernel')
+parser.add_argument('--fcb_reparam_freeze_global_before', action='store_true',
+                    help='freeze global Fourier branch before re-parameterization warmup')
 
 # architecture options 
 parser.add_argument('--narch', type=int, default=0, help='architecture-dependent parameter')
@@ -122,6 +145,16 @@ RESTORABLE_OPTION_KEYS = [
     'fcb_sigma_theta',
     'fcb_directions',
     'fcb_residual_scale',
+    'fcb_diag',
+    'fcb_diag_interval',
+    'fft_loss_weight',
+    'fft_loss_warmup_epochs',
+    'fft_loss_start_epoch',
+    'fcb_use_sim_mask',
+    'fcb_reparam',
+    'fcb_reparam_epoch',
+    'fcb_reparam_source',
+    'fcb_reparam_freeze_global_before',
     'imageSize',
     'scale',
     'nch_in',
@@ -159,7 +192,10 @@ def get_cli_keys():
     keys = set()
     for arg in sys.argv[1:]:
         if arg.startswith('--'):
-            keys.add(arg[2:].replace('-', '_'))
+            key = arg[2:].replace('-', '_')
+            keys.add(key)
+            if key == 'fcb_no_sim_mask':
+                keys.add('fcb_use_sim_mask')
     return keys
 
 
@@ -175,8 +211,9 @@ FCB_DEFAULTS = {
     'fcb_rho_min': 0.25,
     'fcb_tau': 0.05,
     'fcb_sigma_theta': 0.17453292519943295,
-    'fcb_directions': '0,60,120',
-    'fcb_residual_scale': 1e-3,
+    'fcb_directions': '-5.1966,54.9131,115.0424',
+    'fcb_residual_scale': 1e-2,
+    'fcb_use_sim_mask': True,
 }
 
 

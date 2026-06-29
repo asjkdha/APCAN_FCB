@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from models.common import conv, fft2d, fftshift2d, Upsampler
-from models.fcb import FCBLayer
+from models.fcb import DEFAULT_SIM_DIRECTIONS_DEG, FCBLayer
 
 
 class CALayer(nn.Module):
@@ -134,8 +135,9 @@ class APCAB(nn.Module):
                     rho_min=getattr(opt, 'fcb_rho_min', 0.25),
                     tau=getattr(opt, 'fcb_tau', 0.05),
                     sigma_theta=getattr(opt, 'fcb_sigma_theta', 0.17453292519943295),
-                    directions=getattr(opt, 'fcb_directions', None),
-                    residual_scale=getattr(opt, 'fcb_residual_scale', 1e-3),
+                    directions=getattr(opt, 'fcb_directions', DEFAULT_SIM_DIRECTIONS_DEG),
+                    residual_scale=getattr(opt, 'fcb_residual_scale', 1e-2),
+                    use_sim_mask=getattr(opt, 'fcb_use_sim_mask', True),
                 )
             )
         else:
